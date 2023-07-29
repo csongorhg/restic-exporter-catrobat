@@ -30,96 +30,113 @@ class ResticCollector(object):
         # todo: cold start -> the stats cache could be saved in a persistent volume
         # todo: cold start -> the restic cache (/root/.cache/restic) could be
         # saved in a persistent volume
+
+        parent_folder = self.repository
+        items = os.scandir(self.repository)
+        folders = {os.path.join(self.repository, entry.name) for entry in items if entry.is_dir()}
         self.stats_cache = {}
         self.metrics = {}
-        self.refresh(exit_on_error)
+            
+        for folder in folders:
+            logging.info("folder: " + folder)
+            self.stats_cache[folder] = {}
+            self.metrics[folder] = {}
+            self.refresh(exit_on_error, folder)
 
+        
     def collect(self):
         logging.debug("Incoming request")
 
-        common_label_names = [
-            "client_hostname",
-            "client_username",
-            "snapshot_hash",
-            "snapshot_tag",
-            "snapshot_paths",
-        ]
-
-        check_success = GaugeMetricFamily(
-            "restic_check_success",
-            "Result of restic check operation in the repository",
-            labels=[],
-        )
-        locks_total = CounterMetricFamily(
-            "restic_locks_total",
-            "Total number of locks in the repository",
-            labels=[],
-        )
-        snapshots_total = CounterMetricFamily(
-            "restic_snapshots_total",
-            "Total number of snapshots in the repository",
-            labels=[],
-        )
-        backup_timestamp = GaugeMetricFamily(
-            "restic_backup_timestamp",
-            "Timestamp of the last backup",
-            labels=common_label_names,
-        )
-        backup_files_total = CounterMetricFamily(
-            "restic_backup_files_total",
-            "Number of files in the backup",
-            labels=common_label_names,
-        )
-        backup_size_total = CounterMetricFamily(
-            "restic_backup_size_total",
-            "Total size of backup in bytes",
-            labels=common_label_names,
-        )
-        backup_snapshots_total = CounterMetricFamily(
-            "restic_backup_snapshots_total",
-            "Total number of snapshots",
-            labels=common_label_names,
-        )
-        scrape_duration_seconds = GaugeMetricFamily(
-            "restic_scrape_duration_seconds",
-            "Amount of time each scrape takes",
-            labels=[],
-        )
-
-        check_success.add_metric([], self.metrics["check_success"])
-        locks_total.add_metric([], self.metrics["locks_total"])
-        snapshots_total.add_metric([], self.metrics["snapshots_total"])
-
-        for client in self.metrics["clients"]:
-            common_label_values = [
-                client["hostname"],
-                client["username"],
-                client["snapshot_hash"],
-                client["snapshot_tag"],
-                client["snapshot_paths"],
+        items = os.scandir(self.repository)
+        folders = {os.path.join(self.repository, entry.name) for entry in items if entry.is_dir()}
+        for folder in folders:
+            logging.info("folder: " + folder)
+            common_label_names = [
+                "client_hostname",
+                "client_username",
+                "snapshot_hash",
+                "snapshot_tag",
+                "snapshot_paths",
             ]
 
-            backup_timestamp.add_metric(common_label_values, client["timestamp"])
-            backup_files_total.add_metric(common_label_values, client["files_total"])
-            backup_size_total.add_metric(common_label_values, client["size_total"])
-            backup_snapshots_total.add_metric(
-                common_label_values, client["snapshots_total"]
+            check_success = GaugeMetricFamily(
+                "restic_check_success",
+                "Result of restic check operation in the repository",
+                labels=[],
+            )
+            locks_total = CounterMetricFamily(
+                "restic_locks_total",
+                "Total number of locks in the repository",
+                labels=[],
+            )
+            snapshots_total = CounterMetricFamily(
+                "restic_snapshots_total",
+                "Total number of snapshots in the repository",
+                labels=[],
+            )
+            backup_timestamp = GaugeMetricFamily(
+                "restic_backup_timestamp",
+                "Timestamp of the last backup",
+                labels=common_label_names,
+            )
+            backup_files_total = CounterMetricFamily(
+                "restic_backup_files_total",
+                "Number of files in the backup",
+                labels=common_label_names,
+            )
+            backup_size_total = CounterMetricFamily(
+                "restic_backup_size_total",
+                "Total size of backup in bytes",
+                labels=common_label_names,
+            )
+            backup_snapshots_total = CounterMetricFamily(
+                "restic_backup_snapshots_total",
+                "Total number of snapshots",
+                labels=common_label_names,
+            )
+            scrape_duration_seconds = GaugeMetricFamily(
+                "restic_scrape_duration_seconds",
+                "Amount of time each scrape takes",
+                labels=[],
             )
 
-        scrape_duration_seconds.add_metric([], self.metrics["duration"])
+            check_success.add_metric([], self.metrics[folder].get("check_success"))
+            locks_total.add_metric([], self.metrics[folder].get("locks_total"))
+            snapshots_total.add_metric([], self.metrics[folder].get("snapshots_total"))
 
-        yield check_success
-        yield locks_total
-        yield snapshots_total
-        yield backup_timestamp
-        yield backup_files_total
-        yield backup_size_total
-        yield backup_snapshots_total
-        yield scrape_duration_seconds
+            for client in self.metrics[folder].get("clients"):
+                common_label_values = [
+                    client["hostname"],
+                    client["username"],
+                    client["snapshot_hash"],
+                    client["snapshot_tag"],
+                    client["snapshot_paths"],
+                ]
 
-    def refresh(self, exit_on_error=False):
+                backup_timestamp.add_metric(common_label_values, client["timestamp"])
+                backup_files_total.add_metric(common_label_values, client["files_total"])
+                backup_size_total.add_metric(common_label_values, client["size_total"])
+                backup_snapshots_total.add_metric(
+                    common_label_values, client["snapshots_total"]
+                )
+
+            scrape_duration_seconds.add_metric([], self.metrics[folder].get("duration"))
+
+            yield check_success
+            yield locks_total
+            yield snapshots_total
+            yield backup_timestamp
+            yield backup_files_total
+            yield backup_size_total
+            yield backup_snapshots_total
+            yield scrape_duration_seconds
+
+    def refresh(self, exit_on_error=False, repository=None):
         try:
-            self.metrics = self.get_metrics()
+            parent = self.repository
+            self.repository = repository
+            self.metrics[self.repository] = self.get_metrics()
+            self.repository = parent
         except Exception:
             logging.error(
                 "Unable to collect metrics from Restic. %s",
@@ -129,6 +146,7 @@ class ResticCollector(object):
             # Shutdown exporter for any error
             if exit_on_error:
                 sys.exit(1)
+
 
     def get_metrics(self):
         duration = time.time()
@@ -228,7 +246,7 @@ class ResticCollector(object):
             "snapshots",
             "--json",
         ]
-
+        logging.info(cmd)
         if only_latest:
             cmd.extend(["--latest", "1"])
 
@@ -250,7 +268,6 @@ class ResticCollector(object):
         # https://github.com/restic/restic/issues/2126
         if snapshot_id is not None and snapshot_id in self.stats_cache:
             return self.stats_cache[snapshot_id]
-
         cmd = [
             "restic",
             "-r",
@@ -261,6 +278,7 @@ class ResticCollector(object):
             "stats",
             "--json",
         ]
+        logging.info(cmd)
         if snapshot_id is not None:
             cmd.extend([snapshot_id])
 
@@ -287,7 +305,7 @@ class ResticCollector(object):
             "--no-lock",
             "check",
         ]
-
+        logging.info(cmd)
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode == 0:
             return 1  # ok
@@ -308,7 +326,7 @@ class ResticCollector(object):
             "list",
             "locks",
         ]
-
+        logging.info(cmd)
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
             raise Exception(
@@ -383,7 +401,12 @@ if __name__ == "__main__":
                 "Refreshing stats every {0} seconds".format(exporter_refresh_interval)
             )
             time.sleep(exporter_refresh_interval)
-            collector.refresh()
+
+            items = os.scandir(restic_repo_url)
+            folders = {os.path.join(restic_repo_url, entry.name) for entry in items if entry.is_dir()}
+            for folder in folders:
+                logging.info("folder: " + folder)
+                collector.refresh(None, folder)
 
     except KeyboardInterrupt:
         logging.info("\nInterrupted")
